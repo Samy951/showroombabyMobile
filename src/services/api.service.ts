@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import DeviceInfo from "react-native-device-info";
+import * as Device from "expo-device";
 import api from "../config/api";
 
 // Interfaces
@@ -54,7 +54,7 @@ export interface LoginResponse {
     email: string;
     username: string;
   };
-  message: string;
+  message?: string;
 }
 
 export interface User {
@@ -64,32 +64,77 @@ export interface User {
 }
 
 export const authService = {
-  login: async (credentials: {
+  async login(credentials: {
     email: string;
     password: string;
-  }): Promise<LoginResponse> => {
+  }): Promise<LoginResponse> {
     try {
       console.log("Service - Début de la connexion");
 
       // 1. Obtenir le cookie CSRF
-      await api.get("/sanctum/csrf-cookie");
+      try {
+        console.log("Tentative de récupération du cookie CSRF");
+        const csrfResponse = await api.get("/sanctum/csrf-cookie");
+        console.log("Réponse CSRF:", csrfResponse.status);
+      } catch (csrfError) {
+        console.error(
+          "Erreur lors de la récupération du cookie CSRF:",
+          csrfError
+        );
+      }
 
       // 2. Obtenir le nom de l'appareil
-      const deviceName = await DeviceInfo.getDeviceName();
+      let deviceName = "Appareil Mobile";
+      try {
+        deviceName = (await Device.modelName) || "Appareil Mobile";
+        console.log("Nom de l'appareil récupéré:", deviceName);
+      } catch (deviceError) {
+        console.error(
+          "Erreur lors de la récupération du nom de l'appareil:",
+          deviceError
+        );
+      }
 
       // 3. Tentative de connexion
-      const response = await api.post("/auth/login", {
+      console.log("Envoi de la requête de connexion avec:", {
         ...credentials,
         device_name: deviceName,
       });
 
-      if (response.data.access_token) {
-        await AsyncStorage.setItem("access_token", response.data.access_token);
+      const response = await api.post<LoginResponse>("/login", {
+        ...credentials,
+        device_name: deviceName,
+      });
+
+      console.log("Réponse de connexion reçue:", {
+        status: response.status,
+        hasToken: !!response.data?.access_token,
+        hasUser: !!response.data?.user,
+      });
+
+      if (!response.data?.access_token) {
+        throw new Error(
+          "Authentification échouée : pas de token dans la réponse"
+        );
       }
+
+      if (!response.data?.user) {
+        throw new Error(
+          "Authentification échouée : pas d'utilisateur dans la réponse"
+        );
+      }
+
+      // Sauvegarde du token
+      await AsyncStorage.setItem("access_token", response.data.access_token);
+      console.log("Token stocké avec succès");
 
       return response.data;
     } catch (error: any) {
-      console.error("Service - Erreur de connexion:", error);
+      console.error("Service - Erreur complète de connexion:", {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
       throw error;
     }
   },

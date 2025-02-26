@@ -7,31 +7,30 @@ import {
   useState,
 } from "react";
 import api from "../config/api";
-import { authService } from "../services/api.service";
-
-interface User {
-  id: number;
-  email: string;
-  username: string;
-}
+import { User, authService } from "../services/auth.service";
 
 interface AuthContextType {
   isAuthenticated: boolean;
-  setIsAuthenticated: (value: boolean) => void;
+  isLoading: boolean;
   user: User | null;
-  setUser: (user: User | null) => void;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
+  register: (data: {
+    email: string;
+    username: string;
+    password: string;
+    password_confirmation: string;
+  }) => Promise<boolean>;
   checkAuth: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType>({
   isAuthenticated: false,
-  setIsAuthenticated: () => {},
+  isLoading: true,
   user: null,
-  setUser: () => {},
   login: async () => false,
   logout: async () => {},
+  register: async () => false,
   checkAuth: async () => false,
 });
 
@@ -42,168 +41,240 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const updateAuthState = useCallback(
     async (token: string | null, userData: User | null) => {
-      console.log("Mise à jour de l'état d'authentification:", {
+      console.log("useAuth - Mise à jour de l'état d'authentification:", {
         hasToken: !!token,
         hasUser: !!userData,
       });
 
-      if (token) {
-        await AsyncStorage.setItem("access_token", token);
-        api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-      } else {
-        await AsyncStorage.removeItem("access_token");
-        delete api.defaults.headers.common["Authorization"];
-      }
+      try {
+        if (token) {
+          await AsyncStorage.setItem("access_token", token);
+          api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+          
+          if (userData) {
+            await AsyncStorage.setItem("user", JSON.stringify(userData));
+          }
+        } else {
+          await AsyncStorage.multiRemove(["access_token", "user"]);
+          delete api.defaults.headers.common["Authorization"];
+        }
 
-      setUser(userData);
-      setIsAuthenticated(!!userData);
+        setUser(userData);
+        setIsAuthenticated(!!userData);
+
+        console.log("useAuth - État d'authentification mis à jour:", {
+          isAuthenticated: !!userData,
+          hasUser: !!userData,
+        });
+      } catch (error) {
+        console.error("useAuth - Erreur lors de la mise à jour de l'état:", error);
+        throw error;
+      }
     },
     []
   );
 
   const checkAuth = useCallback(async () => {
     try {
-      const token = await AsyncStorage.getItem("access_token");
-      console.log("Vérification du token:", { hasToken: !!token });
+      console.log("useAuth - Vérification de l'authentification...");
+      
+      // Toujours indiquer le chargement au début
+      setIsLoading(true);
+      
+      // On commence par lire les données locales
+      const [tokenResult, userResult] = await AsyncStorage.multiGet([
+        "access_token", 
+        "user"
+      ]);
+      
+      const token = tokenResult[1];
+      const userStr = userResult[1];
+      
+      console.log("useAuth - Données locales:", { 
+        hasToken: !!token, 
+        hasUserData: !!userStr,
+        // Vérifier si c'est le token de développement
+        isDevToken: token === "fake_dev_token"
+      });
 
+      // Cas où nous n'avons pas de token - pas authentifié
       if (!token) {
-        await new Promise<void>((resolve) => {
-          setIsAuthenticated(false);
-          setUser(null);
-          setTimeout(resolve, 50);
-        });
+        console.log("useAuth - Pas de token trouvé, considéré comme non authentifié");
+        await updateAuthState(null, null);
+        setIsLoading(false);
         return false;
       }
 
-      api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-      const userData = await authService.getProfile();
-
-      if (userData) {
-        await new Promise<void>((resolve) => {
-          setUser(userData);
+      // Mode développement - Simuler une authentification réussie
+      if (token === "fake_dev_token" && userStr) {
+        try {
+          const devUser = JSON.parse(userStr) as User;
+          console.log("useAuth - Mode développement détecté");
+          setUser(devUser);
           setIsAuthenticated(true);
-          setTimeout(resolve, 50);
-        });
-        console.log("Authentification vérifiée - Utilisateur connecté");
-        return true;
+          api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+          setIsLoading(false);
+          return true;
+        } catch (e) {
+          console.error("useAuth - Erreur avec le mode développement:", e);
+        }
       }
 
-      throw new Error("Profil utilisateur invalide");
-    } catch (error) {
-      console.error("Erreur de vérification:", error);
-      await new Promise<void>((resolve) => {
-        setUser(null);
-        setIsAuthenticated(false);
-        setTimeout(resolve, 50);
-      });
-      delete api.defaults.headers.common["Authorization"];
-      await AsyncStorage.removeItem("access_token");
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+      // Définir le token dans les en-têtes pour les requêtes API
+      api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+      
+      // Si on a des données utilisateur en cache, les utiliser temporairement
+      if (userStr) {
+        try {
+          const cachedUser = JSON.parse(userStr) as User;
+          console.log("useAuth - Utilisation des données utilisateur en cache");
+          setUser(cachedUser);
+          setIsAuthenticated(true);
+          
+          // Essayer de rafraîchir les données en arrière-plan
+          authService.getProfile()
+            .then(freshUser => {
+              console.log("useAuth - Données utilisateur rafraîchies");
+              AsyncStorage.setItem("user", JSON.stringify(freshUser));
+              setUser(freshUser);
+            })
+            .catch(e => {
+              console.log("useAuth - Échec du rafraîchissement des données:", e);
+              // On garde les données en cache pour l'instant
+            })
+            .finally(() => {
+              setIsLoading(false);
+            });
+          
+          return true;
+        } catch (e) {
+          console.error("useAuth - Erreur lors du parsing des données utilisateur:", e);
+          // Continuer pour récupérer les données depuis l'API
+        }
+      }
 
-  const login = async (email: string, password: string) => {
+      // Tenter de récupérer le profil utilisateur depuis le serveur
+      try {
+        console.log("useAuth - Récupération du profil depuis l'API...");
+        const userData = await authService.getProfile();
+        
+        if (userData) {
+          console.log("useAuth - Profil récupéré avec succès");
+          await updateAuthState(token, userData);
+          setIsLoading(false);
+          return true;
+        } else {
+          console.log("useAuth - Profil récupéré mais invalide");
+          await updateAuthState(null, null);
+          setIsLoading(false);
+          return false;
+        }
+      } catch (error) {
+        console.error("useAuth - Erreur lors de la récupération du profil:", error);
+        // Si le token est expiré ou invalide, on vide l'état d'authentification
+        // Sauf en mode développement où on conserve l'état
+        if (token !== "fake_dev_token") {
+          await updateAuthState(null, null);
+        }
+        setIsLoading(false);
+        return token === "fake_dev_token"; // Vrai si en mode dev
+      }
+    } catch (error) {
+      console.error("useAuth - Erreur générale de vérification:", error);
+      await updateAuthState(null, null);
+      setIsLoading(false);
+      return false;
+    }
+  }, [updateAuthState]);
+
+  const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      console.log("Hook - Début de la tentative de connexion...");
-      console.log("Hook - Envoi des identifiants:", {
-        email,
-        hasPassword: !!password,
-      });
+      setIsLoading(true);
+      console.log("useAuth - Début de la tentative de connexion...");
 
       if (!email || !password) {
-        console.error("Hook - Email ou mot de passe manquant");
+        console.error("useAuth - Email ou mot de passe manquant");
         throw new Error("Email et mot de passe requis");
       }
 
-      console.log("Hook - Appel du service d'authentification...");
-      const response = await authService
-        .login({ email, password })
-        .catch((error) => {
-          console.error("Hook - Erreur du service d'authentification:", {
-            name: error.name,
-            message: error.message,
-            isAxiosError: error.isAxiosError,
-            response: error.response?.data,
-            status: error.response?.status,
-          });
-          throw error;
-        });
-
-      console.log("Hook - Réponse du service:", {
-        hasResponse: !!response,
+      const response = await authService.login(email, password);
+      console.log("useAuth - Réponse du service:", {
         hasToken: !!response?.access_token,
         hasUser: !!response?.user,
       });
 
       if (!response || !response.access_token || !response.user) {
-        console.error("Hook - Réponse invalide du service");
         throw new Error("Réponse invalide du serveur");
       }
 
-      console.log("Hook - Mise à jour du token et de l'état...");
-
-      // Configuration du token d'abord
-      api.defaults.headers.common["Authorization"] =
-        `Bearer ${response.access_token}`;
-      await AsyncStorage.setItem("access_token", response.access_token);
-
-      // Mise à jour synchrone de l'état
-      setUser(response.user);
-      setIsAuthenticated(true);
-
-      console.log("Hook - État mis à jour avec succès");
+      // Important: mettre à jour l'état AVANT de retourner
+      await updateAuthState(response.access_token, response.user);
+      console.log("useAuth - Authentification réussie et état mis à jour");
+      setIsLoading(false);
       return true;
     } catch (error: any) {
-      console.error("Hook - Erreur complète:", {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-        isAxiosError: error.isAxiosError,
-        response: error.response?.data,
-        status: error.response?.status,
-      });
-
-      // Réinitialisation de l'état
-      setUser(null);
-      setIsAuthenticated(false);
-      delete api.defaults.headers.common["Authorization"];
-      await AsyncStorage.removeItem("access_token");
-
-      console.log("Hook - État réinitialisé après erreur");
-      return false;
+      console.error("useAuth - Erreur de connexion:", error);
+      await updateAuthState(null, null);
+      setIsLoading(false);
+      throw error;
     }
   };
 
-  const logout = async () => {
+  const register = async (data: {
+    email: string;
+    username: string;
+    password: string;
+    password_confirmation: string;
+  }): Promise<boolean> => {
     try {
-      await authService.logout();
+      setIsLoading(true);
+      console.log("useAuth - Début de l'inscription...");
+      await authService.register(data);
+      
+      // Après inscription réussie, connecter l'utilisateur
+      return await login(data.email, data.password);
     } catch (error) {
-      console.error("Erreur lors de la déconnexion:", error);
+      console.error("useAuth - Erreur d'inscription:", error);
+      setIsLoading(false);
+      throw error;
+    }
+  };
+
+  const logout = async (): Promise<void> => {
+    try {
+      setIsLoading(true);
+      console.log("useAuth - Début de la déconnexion...");
+      
+      const token = await AsyncStorage.getItem("access_token");
+      // Ne pas essayer d'appeler l'API en mode dev
+      if (token !== "fake_dev_token") {
+        await authService.logout();
+      }
+    } catch (error) {
+      console.error("useAuth - Erreur lors de la déconnexion:", error);
     } finally {
       await updateAuthState(null, null);
+      setIsLoading(false);
     }
   };
 
-  // Vérifier l'authentification au montage du provider
   useEffect(() => {
-    checkAuth();
+    console.log("useAuth - Premier rendu, vérification initiale de l'authentification");
+    checkAuth().catch(error => {
+      console.error("useAuth - Erreur initiale de vérification:", error);
+      setIsLoading(false);
+    });
   }, [checkAuth]);
-
-  if (isLoading) {
-    return null; // Ou un composant de chargement
-  }
 
   return (
     <AuthContext.Provider
       value={{
         isAuthenticated,
-        setIsAuthenticated,
+        isLoading,
         user,
-        setUser,
         login,
         logout,
+        register,
         checkAuth,
       }}
     >

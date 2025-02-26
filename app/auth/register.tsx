@@ -1,156 +1,194 @@
-import { router } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { AxiosError } from "axios";
+import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
-import { authService } from "../../src/services/api.service";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useAuth } from "../../src/hooks/useAuth";
 
 export default function RegisterScreen() {
-  const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const { register } = useAuth();
+  const router = useRouter();
+  const [form, setForm] = useState({
+    username: "",
+    email: "",
+    password: "",
+    password_confirmation: "",
+  });
   const [loading, setLoading] = useState(false);
 
+  const handleChange = (field: string, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
   const handleRegister = async () => {
-    if (!username || !email || !password || !passwordConfirmation) {
+    // Validation des champs
+    if (!form.username || !form.email || !form.password || !form.password_confirmation) {
       Alert.alert("Erreur", "Veuillez remplir tous les champs");
       return;
     }
 
-    if (password !== passwordConfirmation) {
+    if (form.password !== form.password_confirmation) {
       Alert.alert("Erreur", "Les mots de passe ne correspondent pas");
       return;
     }
 
     try {
       setLoading(true);
-      await authService.register({
-        username,
-        email,
-        password,
-        password_confirmation: passwordConfirmation,
+      console.log("RegisterScreen - Début de l'inscription...");
+
+      // Fermer le clavier pendant le chargement
+      Keyboard.dismiss();
+
+      const success = await register(form);
+      console.log("RegisterScreen - Inscription réussie:", success);
+      
+      // La redirection se fera automatiquement via useProtectedRoute
+    } catch (err) {
+      const error = err as Error | AxiosError;
+      console.error("RegisterScreen - Erreur détaillée:", {
+        name: error.name,
+        message: error.message,
+        isAxiosError: error instanceof AxiosError,
+        response:
+          error instanceof AxiosError ? error.response?.data : undefined,
+        status:
+          error instanceof AxiosError ? error.response?.status : undefined,
       });
-      router.replace("/(tabs)/profile");
-    } catch (error: any) {
-      Alert.alert(
-        "Erreur d'inscription",
-        error.response?.data?.message || "Une erreur est survenue"
-      );
+
+      let errorMessage = "Une erreur est survenue lors de l'inscription";
+
+      if (error instanceof AxiosError && error.response) {
+        switch (error.response.status) {
+          case 422:
+            const validationErrors = error.response.data?.errors || {};
+            errorMessage = Object.values(validationErrors)
+              .flat()
+              .join("\n");
+            break;
+          case 429:
+            errorMessage =
+              "Trop de tentatives. Veuillez patienter quelques minutes.";
+            break;
+          default:
+            errorMessage =
+              error.response.data?.message ||
+              error.response.data?.error ||
+              "Erreur de connexion au serveur";
+        }
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+
+      console.log("RegisterScreen - Affichage de l'erreur:", errorMessage);
+      Alert.alert("Erreur d'inscription", errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.form}>
-        <Text style={styles.title}>Inscription</Text>
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      <SafeAreaView className="flex-1 bg-white">
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <View className="flex-1 px-6 pt-10 pb-6">
+            <TouchableOpacity className="mb-6" onPress={() => router.back()}>
+              <Ionicons name="arrow-back" size={24} color="#333" />
+            </TouchableOpacity>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Nom d'utilisateur"
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-        />
+            <Text className="mb-8 text-3xl font-bold">Inscription</Text>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
+            <View className="space-y-4">
+              <View>
+                <Text className="mb-2 text-gray-600">Nom d'utilisateur</Text>
+                <TextInput
+                  className="p-4 bg-gray-100 rounded-xl"
+                  placeholder="Votre nom d'utilisateur"
+                  value={form.username}
+                  onChangeText={(value) => handleChange("username", value)}
+                  autoCapitalize="none"
+                  autoComplete="username"
+                />
+              </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Mot de passe"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
+              <View>
+                <Text className="mb-2 text-gray-600">Email</Text>
+                <TextInput
+                  className="p-4 bg-gray-100 rounded-xl"
+                  placeholder="Votre email"
+                  value={form.email}
+                  onChangeText={(value) => handleChange("email", value)}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                />
+              </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Confirmer le mot de passe"
-          value={passwordConfirmation}
-          onChangeText={setPasswordConfirmation}
-          secureTextEntry
-        />
+              <View>
+                <Text className="mb-2 text-gray-600">Mot de passe</Text>
+                <TextInput
+                  className="p-4 bg-gray-100 rounded-xl"
+                  placeholder="Votre mot de passe"
+                  value={form.password}
+                  onChangeText={(value) => handleChange("password", value)}
+                  secureTextEntry
+                  autoComplete="new-password"
+                />
+              </View>
 
-        <TouchableOpacity
-          style={styles.button}
-          onPress={handleRegister}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>S'inscrire</Text>
-          )}
-        </TouchableOpacity>
+              <View>
+                <Text className="mb-2 text-gray-600">
+                  Confirmation du mot de passe
+                </Text>
+                <TextInput
+                  className="p-4 bg-gray-100 rounded-xl"
+                  placeholder="Confirmez votre mot de passe"
+                  value={form.password_confirmation}
+                  onChangeText={(value) =>
+                    handleChange("password_confirmation", value)
+                  }
+                  secureTextEntry
+                  autoComplete="new-password"
+                />
+              </View>
+            </View>
 
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.linkText}>Déjà un compte ? Se connecter</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+            <TouchableOpacity
+              className="py-4 mt-8 bg-primary rounded-xl"
+              onPress={handleRegister}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text className="text-lg font-semibold text-center text-white">
+                  S'inscrire
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              className="mt-4"
+              onPress={() => router.push("/auth/login")}
+            >
+              <Text className="text-center text-gray-600">
+                Déjà un compte ?{" "}
+                <Text className="font-semibold text-primary">Se connecter</Text>
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </TouchableWithoutFeedback>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    backgroundColor: "#fff",
-    padding: 20,
-    justifyContent: "center",
-  },
-  form: {
-    width: "100%",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 30,
-    textAlign: "center",
-  },
-  input: {
-    backgroundColor: "#f5f5f5",
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 15,
-    fontSize: 16,
-  },
-  button: {
-    backgroundColor: "#007AFF",
-    padding: 15,
-    borderRadius: 10,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  linkButton: {
-    marginTop: 20,
-    alignItems: "center",
-  },
-  linkText: {
-    color: "#007AFF",
-    fontSize: 16,
-  },
-});
