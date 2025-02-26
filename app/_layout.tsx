@@ -1,23 +1,72 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { Stack, useRouter, useSegments } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import React, { useEffect, useState } from "react";
+import { useAuth } from "../src/hooks/useAuth";
 
-const queryClient = new QueryClient();
+export const unstable_settings = {
+  initialRouteName: "(tabs)",
+};
+
+function useProtectedRoute(isAuthenticated: boolean) {
+  const segments = useSegments();
+  const router = useRouter();
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  useEffect(() => {
+    if (!isInitialized) {
+      setIsInitialized(true);
+      return;
+    }
+
+    const inAuthGroup = segments[0] === "auth";
+    const inTabsGroup = segments[0] === "(tabs)";
+
+    console.log("État de navigation détaillé:", {
+      isAuthenticated,
+      inAuthGroup,
+      inTabsGroup,
+      segments,
+      currentPath: segments.join("/"),
+    });
+
+    if (!isAuthenticated && !inAuthGroup) {
+      console.log("Redirection vers login - Non authentifié");
+      router.replace("/auth/login");
+    } else if (isAuthenticated && inAuthGroup) {
+      console.log("Redirection vers tabs - Authentifié");
+      router.replace("/(tabs)");
+    }
+  }, [isAuthenticated, segments, router, isInitialized]);
+}
 
 export default function RootLayout() {
+  const { isAuthenticated, checkAuth } = useAuth();
+  const [isChecking, setIsChecking] = useState(true);
+
+  useEffect(() => {
+    async function initialize() {
+      console.log("Initialisation de l'application...");
+      const isAuth = await checkAuth();
+      console.log("État d'authentification initial:", { isAuth });
+      setIsChecking(false);
+    }
+
+    initialize();
+  }, [checkAuth]);
+
+  useProtectedRoute(isAuthenticated);
+
+  if (isChecking) {
+    return null; // Ou un composant de chargement
+  }
+
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <QueryClientProvider client={queryClient}>
-        <SafeAreaProvider>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: "#F7F7F7" },
-            }}
-          />
-        </SafeAreaProvider>
-      </QueryClientProvider>
-    </GestureHandlerRootView>
+    <>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="auth" options={{ headerShown: false }} />
+      </Stack>
+      <StatusBar style="dark" />
+    </>
   );
 }
