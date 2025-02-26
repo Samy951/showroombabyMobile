@@ -16,12 +16,14 @@ const api = axios.create({
     Accept: "application/json",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "X-Requested-With": "XMLHttpRequest",
   },
   timeout: 30000,
   validateStatus: function (status) {
     console.log("Status de la réponse:", status);
     return status >= 200 && status < 500; // Accepte les statuts 2xx, 3xx et 4xx
   },
+  withCredentials: true,
 });
 
 // Intercepteur pour ajouter le token Sanctum
@@ -71,6 +73,12 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       console.log("Erreur d'authentification 401 - Suppression du token");
       await AsyncStorage.removeItem("access_token");
+    }
+
+    if (error.response?.status === 419) {
+      console.log("Erreur CSRF détectée, rafraîchissement du token...");
+      await api.get("/sanctum/csrf-cookie");
+      return api(error.config);
     }
 
     console.error("Erreur API détaillée:", {

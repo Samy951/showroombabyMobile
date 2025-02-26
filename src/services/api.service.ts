@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import DeviceInfo from "react-native-device-info";
 import api from "../config/api";
 
 // Interfaces
@@ -68,59 +69,27 @@ export const authService = {
     password: string;
   }): Promise<LoginResponse> => {
     try {
-      console.log("Service - Initialisation du CSRF token...");
+      console.log("Service - Début de la connexion");
 
-      // 1. Récupérer le CSRF token
-      const csrfResponse = await fetch(
-        `${api.defaults.baseURL}/sanctum/csrf-cookie`,
-        {
-          method: "GET",
-          credentials: "include",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      // 1. Obtenir le cookie CSRF
+      await api.get("/sanctum/csrf-cookie");
 
-      console.log("Service - Réponse CSRF:", {
-        status: csrfResponse.status,
-        headers: Object.fromEntries(csrfResponse.headers.entries()),
+      // 2. Obtenir le nom de l'appareil
+      const deviceName = await DeviceInfo.getDeviceName();
+
+      // 3. Tentative de connexion
+      const response = await api.post("/auth/login", {
+        ...credentials,
+        device_name: deviceName,
       });
 
-      // 2. Tentative de connexion
-      console.log("Service - Tentative de connexion...");
-      const loginResponse = await fetch(`${api.defaults.baseURL}/auth/login`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "X-Requested-With": "XMLHttpRequest",
-        },
-        body: JSON.stringify(credentials),
-      });
-
-      console.log("Service - Réponse login:", {
-        status: loginResponse.status,
-        statusText: loginResponse.statusText,
-        headers: Object.fromEntries(loginResponse.headers.entries()),
-      });
-
-      const data = await loginResponse.json();
-      console.log("Service - Données reçues:", data);
-
-      if (!loginResponse.ok) {
-        throw new Error(data.message || "Erreur lors de la connexion");
+      if (response.data.access_token) {
+        await AsyncStorage.setItem("access_token", response.data.access_token);
       }
 
-      return data;
+      return response.data;
     } catch (error: any) {
-      console.error("Service - Erreur complète:", {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-      });
+      console.error("Service - Erreur de connexion:", error);
       throw error;
     }
   },
