@@ -26,34 +26,87 @@ export default function RegisterScreen() {
     password_confirmation: "",
   });
   const [loading, setLoading] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  const handleChange = (field: string, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  };
+  const validateForm = () => {
+    const errors: Record<string, string> = {};
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  const handleRegister = async () => {
-    // Validation des champs
-    if (!form.username || !form.email || !form.password || !form.password_confirmation) {
-      Alert.alert("Erreur", "Veuillez remplir tous les champs");
-      return;
+    if (!form.username.trim()) {
+      errors.username = "Le nom d'utilisateur est requis";
+    }
+
+    if (!form.email.trim()) {
+      errors.email = "L'email est requis";
+    } else if (!emailRegex.test(form.email)) {
+      errors.email = "Format d'email invalide";
+    }
+
+    if (!form.password) {
+      errors.password = "Le mot de passe est requis";
+    } else if (form.password.length < 8) {
+      errors.password = "Le mot de passe doit contenir au moins 8 caractères";
     }
 
     if (form.password !== form.password_confirmation) {
-      Alert.alert("Erreur", "Les mots de passe ne correspondent pas");
-      return;
+      errors.password_confirmation = "Les mots de passe ne correspondent pas";
     }
 
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleChange = (field: string, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    // Effacer l'erreur pour ce champ quand l'utilisateur commence à taper
+    if (formErrors[field]) {
+      setFormErrors((prev) => {
+        const newErrors = { ...prev };
+        delete newErrors[field];
+        return newErrors;
+      });
+    }
+  };
+
+  const handleRegister = async () => {
     try {
+      // Valider le formulaire
+      if (!validateForm()) {
+        console.log("RegisterScreen - Erreurs de validation:", formErrors);
+        return;
+      }
+
       setLoading(true);
       console.log("RegisterScreen - Début de l'inscription...");
+      console.log("RegisterScreen - Données:", {
+        ...form,
+        password: "[MASQUÉ]",
+        password_confirmation: "[MASQUÉ]",
+      });
 
       // Fermer le clavier pendant le chargement
       Keyboard.dismiss();
 
+      // En mode développement, on peut ajouter un délai artificiel
+      if (__DEV__) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
       const success = await register(form);
       console.log("RegisterScreen - Inscription réussie:", success);
-      
-      // La redirection se fera automatiquement via useProtectedRoute
+
+      if (success) {
+        // La redirection se fera automatiquement via useProtectedRoute
+        Alert.alert(
+          "Inscription réussie",
+          "Votre compte a été créé avec succès. Vous allez être redirigé vers l'application."
+        );
+      } else {
+        Alert.alert(
+          "Échec de l'inscription",
+          "L'inscription a échoué. Veuillez réessayer."
+        );
+      }
     } catch (err) {
       const error = err as Error | AxiosError;
       console.error("RegisterScreen - Erreur détaillée:", {
@@ -69,12 +122,14 @@ export default function RegisterScreen() {
       let errorMessage = "Une erreur est survenue lors de l'inscription";
 
       if (error instanceof AxiosError && error.response) {
+        console.log(
+          "RegisterScreen - Erreur de réponse complète:",
+          error.response
+        );
         switch (error.response.status) {
           case 422:
             const validationErrors = error.response.data?.errors || {};
-            errorMessage = Object.values(validationErrors)
-              .flat()
-              .join("\n");
+            errorMessage = Object.values(validationErrors).flat().join("\n");
             break;
           case 429:
             errorMessage =
@@ -112,19 +167,28 @@ export default function RegisterScreen() {
               <View>
                 <Text className="mb-2 text-gray-600">Nom d'utilisateur</Text>
                 <TextInput
-                  className="p-4 bg-gray-100 rounded-xl"
+                  className={`p-4 bg-gray-100 rounded-xl ${
+                    formErrors.username ? "border border-red-500" : ""
+                  }`}
                   placeholder="Votre nom d'utilisateur"
                   value={form.username}
                   onChangeText={(value) => handleChange("username", value)}
                   autoCapitalize="none"
                   autoComplete="username"
                 />
+                {formErrors.username && (
+                  <Text className="mt-1 text-red-500">
+                    {formErrors.username}
+                  </Text>
+                )}
               </View>
 
               <View>
                 <Text className="mb-2 text-gray-600">Email</Text>
                 <TextInput
-                  className="p-4 bg-gray-100 rounded-xl"
+                  className={`p-4 bg-gray-100 rounded-xl ${
+                    formErrors.email ? "border border-red-500" : ""
+                  }`}
                   placeholder="Votre email"
                   value={form.email}
                   onChangeText={(value) => handleChange("email", value)}
@@ -132,18 +196,28 @@ export default function RegisterScreen() {
                   autoCapitalize="none"
                   autoComplete="email"
                 />
+                {formErrors.email && (
+                  <Text className="mt-1 text-red-500">{formErrors.email}</Text>
+                )}
               </View>
 
               <View>
                 <Text className="mb-2 text-gray-600">Mot de passe</Text>
                 <TextInput
-                  className="p-4 bg-gray-100 rounded-xl"
+                  className={`p-4 bg-gray-100 rounded-xl ${
+                    formErrors.password ? "border border-red-500" : ""
+                  }`}
                   placeholder="Votre mot de passe"
                   value={form.password}
                   onChangeText={(value) => handleChange("password", value)}
                   secureTextEntry
                   autoComplete="new-password"
                 />
+                {formErrors.password && (
+                  <Text className="mt-1 text-red-500">
+                    {formErrors.password}
+                  </Text>
+                )}
               </View>
 
               <View>
@@ -151,7 +225,11 @@ export default function RegisterScreen() {
                   Confirmation du mot de passe
                 </Text>
                 <TextInput
-                  className="p-4 bg-gray-100 rounded-xl"
+                  className={`p-4 bg-gray-100 rounded-xl ${
+                    formErrors.password_confirmation
+                      ? "border border-red-500"
+                      : ""
+                  }`}
                   placeholder="Confirmez votre mot de passe"
                   value={form.password_confirmation}
                   onChangeText={(value) =>
@@ -160,6 +238,11 @@ export default function RegisterScreen() {
                   secureTextEntry
                   autoComplete="new-password"
                 />
+                {formErrors.password_confirmation && (
+                  <Text className="mt-1 text-red-500">
+                    {formErrors.password_confirmation}
+                  </Text>
+                )}
               </View>
             </View>
 
@@ -186,6 +269,68 @@ export default function RegisterScreen() {
                 <Text className="font-semibold text-primary">Se connecter</Text>
               </Text>
             </TouchableOpacity>
+
+            {/* NOUVEAU: Bouton de développement en bas */}
+            {__DEV__ && (
+              <View className="mt-6 border-t border-gray-200 pt-6">
+                <Text className="text-center text-gray-500 mb-4">
+                  Mode développement
+                </Text>
+                <TouchableOpacity
+                  className="py-3 bg-green-600 rounded-xl"
+                  onPress={async () => {
+                    try {
+                      setLoading(true);
+                      // Simuler un délai
+                      await new Promise((resolve) => setTimeout(resolve, 500));
+
+                      // Créer un utilisateur test aléatoire
+                      const randomId = Math.floor(Math.random() * 10000);
+                      const testUser = {
+                        username: `testuser${randomId}`,
+                        email: `test${randomId}@example.com`,
+                        password: "password123",
+                        password_confirmation: "password123",
+                      };
+
+                      console.log("Register - Inscription test avec:", {
+                        username: testUser.username,
+                        email: testUser.email,
+                      });
+
+                      const success = await register(testUser);
+
+                      if (success) {
+                        console.log(
+                          "Register - Inscription en mode développement réussie"
+                        );
+                        Alert.alert(
+                          "Succès",
+                          "Inscription en mode développement réussie"
+                        );
+                      } else {
+                        Alert.alert(
+                          "Échec",
+                          "L'inscription en mode développement a échoué"
+                        );
+                      }
+                    } catch (error) {
+                      console.error("Erreur mode dev:", error);
+                      Alert.alert(
+                        "Erreur",
+                        "Une erreur est survenue en mode développement"
+                      );
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                >
+                  <Text className="text-center text-white font-semibold">
+                    Inscription avec utilisateur test
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </ScrollView>
       </SafeAreaView>

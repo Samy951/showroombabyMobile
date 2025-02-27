@@ -1,204 +1,302 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Ionicons } from "@expo/vector-icons";
-import { AxiosError } from "axios";
-import { useRouter } from "expo-router";
+import { Link } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../src/hooks/useAuth";
 
 export default function LoginScreen() {
-  const { login } = useAuth();
-  const router = useRouter();
+  const { login, isLoading, error, clearError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
+  // Effacer les erreurs lorsque les entrées changent
+  const handleInputChange = (
+    setter: React.Dispatch<React.SetStateAction<string>>,
+    value: string
+  ) => {
+    if (error) clearError();
+    setter(value);
+  };
+
+  // Gérer la connexion
   const handleLogin = async () => {
-    // Réinitialiser le message d'erreur
-    setError(null);
-    
-    if (!email || !password) {
-      setError("Veuillez remplir tous les champs");
+    if (!email.trim()) {
+      Alert.alert("Erreur", "Veuillez entrer votre email");
+      return;
+    }
+
+    if (!password) {
+      Alert.alert("Erreur", "Veuillez entrer votre mot de passe");
       return;
     }
 
     try {
       setLoading(true);
-      console.log("LoginScreen - Début de la connexion avec:", {
-        email,
-        hasPassword: !!password,
-      });
-
-      // Fermer le clavier pendant le chargement
-      Keyboard.dismiss();
-
       const success = await login(email, password);
-      console.log("LoginScreen - Connexion réussie:", success);
-      
-      // La redirection se fera automatiquement via useProtectedRoute
-    } catch (err) {
-      const error = err as Error | AxiosError;
-      console.error("LoginScreen - Erreur détaillée:", {
-        name: error.name,
-        message: error.message,
-        isAxiosError: error instanceof AxiosError,
-        response:
-          error instanceof AxiosError ? error.response?.data : undefined,
-        status:
-          error instanceof AxiosError ? error.response?.status : undefined,
-      });
-
-      let errorMessage = "Une erreur est survenue lors de la connexion";
-
-      if (error instanceof AxiosError) {
-        if (!error.response) {
-          // Erreur réseau (pas de connexion au serveur)
-          errorMessage = "Impossible de se connecter au serveur. Vérifiez votre connexion internet.";
-        } else {
-          switch (error.response.status) {
-            case 422:
-              const validationErrors = error.response.data?.errors || {};
-              errorMessage = Object.values(validationErrors).flat().join("\n");
-              break;
-            case 401:
-              errorMessage = "Email ou mot de passe incorrect";
-              break;
-            case 429:
-              errorMessage =
-                "Trop de tentatives. Veuillez patienter quelques minutes.";
-              break;
-            default:
-              errorMessage =
-                error.response.data?.message ||
-                error.response.data?.error ||
-                "Erreur de connexion au serveur";
-          }
-        }
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
+      if (success) {
+        // Redirection vers l'accueil géré par le RootLayout
+        console.log("Connexion réussie, redirection vers l'accueil...");
       }
-
-      console.log("LoginScreen - Affichage de l'erreur:", errorMessage);
-      setError(errorMessage);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDevLogin = async () => {
-    try {
-      setLoading(true);
-      console.log("LoginScreen - Mode dev: simulation de connexion");
-
-      // Stocker un faux token et un faux utilisateur
-      await AsyncStorage.setItem("access_token", "fake_dev_token");
-      await AsyncStorage.setItem("user", JSON.stringify({
-        id: 1,
-        email: "dev@example.com",
-        username: "DeveloperMode"
-      }));
-      
-      // Forcer un rechargement de l'app
-      router.replace("/");
-    } catch (e) {
-      console.error("Erreur lors de la connexion de dev:", e);
-      setError("Erreur lors de la simulation de connexion");
+    } catch (err: any) {
+      console.error("Erreur de connexion:", err);
+      Alert.alert(
+        "Erreur de connexion",
+        err.message || "Impossible de se connecter. Veuillez réessayer."
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-      <SafeAreaView className="flex-1 bg-white">
-        <View className="flex-1 px-6 pt-10">
-          <TouchableOpacity className="mb-6" onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#333" />
-          </TouchableOpacity>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.container}
+    >
+      <ScrollView contentContainerStyle={styles.scrollContainer}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Connexion</Text>
+          <Text style={styles.subtitle}>
+            Bienvenue ! Connectez-vous pour accéder à votre compte.
+          </Text>
+        </View>
 
-          <Text className="mb-8 text-3xl font-bold">Connexion</Text>
+        {error && (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
 
-          {error && (
-            <View className="mb-4 p-3 bg-red-100 rounded-lg">
-              <Text className="text-red-700">{error}</Text>
-            </View>
-          )}
+        <View style={styles.form}>
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={(value) => handleInputChange(setEmail, value)}
+              placeholder="Entrez votre email"
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoCorrect={false}
+              editable={!loading}
+            />
+          </View>
 
-          <View className="space-y-4">
-            <View>
-              <Text className="mb-2 text-gray-600">Email</Text>
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Mot de passe</Text>
+            <View style={styles.passwordContainer}>
               <TextInput
-                className="p-4 bg-gray-100 rounded-xl"
-                placeholder="Votre email"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoComplete="email"
-              />
-            </View>
-
-            <View>
-              <Text className="mb-2 text-gray-600">Mot de passe</Text>
-              <TextInput
-                className="p-4 bg-gray-100 rounded-xl"
-                placeholder="Votre mot de passe"
+                style={styles.passwordInput}
                 value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                autoComplete="password"
+                onChangeText={(value) => handleInputChange(setPassword, value)}
+                placeholder="Entrez votre mot de passe"
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!loading}
               />
+              <TouchableOpacity
+                style={styles.visibilityBtn}
+                onPress={() => setShowPassword(!showPassword)}
+                disabled={loading}
+              >
+                <Text style={styles.visibilityText}>
+                  {showPassword ? "Masquer" : "Afficher"}
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
 
           <TouchableOpacity
-            className="py-4 mt-8 bg-primary rounded-xl"
+            style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="white" />
+              <ActivityIndicator color="#fff" />
             ) : (
-              <Text className="text-lg font-semibold text-center text-white">
-                Se connecter
-              </Text>
+              <Text style={styles.buttonText}>Se connecter</Text>
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            className="mt-4"
-            onPress={() => router.push("/auth/register")}
-          >
-            <Text className="text-center text-gray-600">
-              Pas encore de compte ?{" "}
-              <Text className="font-semibold text-primary">S'inscrire</Text>
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Vous n'avez pas de compte ?</Text>
+            <Link href="/auth/register" asChild>
+              <TouchableOpacity disabled={loading}>
+                <Text style={styles.linkText}>Créer un compte</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+        </View>
+
+        {/* NOUVEAU: Bouton de développement en bas */}
+        {__DEV__ && (
+          <View className="mt-6 border-t border-gray-200 pt-6">
+            <Text className="text-center text-gray-500 mb-4">
+              Mode développement
             </Text>
-          </TouchableOpacity>
-          
-          {/* Bouton pour simuler une connexion réussie (pour le développement) */}
-          {__DEV__ && (
             <TouchableOpacity
-              className="py-4 mt-8 bg-green-600 rounded-xl"
-              onPress={handleDevLogin}
+              className="py-3 bg-green-600 rounded-xl"
+              onPress={async () => {
+                try {
+                  setLoading(true);
+                  // Simuler un délai
+                  await new Promise((resolve) => setTimeout(resolve, 500));
+
+                  // Utiliser le mode développement
+                  const success = await login("dev@example.com", "password");
+
+                  if (success) {
+                    console.log(
+                      "Login - Connexion en mode développement réussie"
+                    );
+                  } else {
+                    Alert.alert(
+                      "Échec",
+                      "La connexion en mode développement a échoué"
+                    );
+                  }
+                } catch (error) {
+                  console.error("Erreur mode dev:", error);
+                  Alert.alert(
+                    "Erreur",
+                    "Une erreur est survenue en mode développement"
+                  );
+                } finally {
+                  setLoading(false);
+                }
+              }}
             >
-              <Text className="text-lg font-semibold text-center text-white">
-                Mode Dev: Simuler Connexion
+              <Text className="text-center text-white font-semibold">
+                Connexion en mode développement
               </Text>
             </TouchableOpacity>
-          )}
-        </View>
-      </SafeAreaView>
-    </TouchableWithoutFeedback>
+          </View>
+        )}
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
+  scrollContainer: {
+    flexGrow: 1,
+    padding: 20,
+    justifyContent: "center",
+  },
+  header: {
+    marginBottom: 30,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 10,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: "#666",
+  },
+  form: {
+    width: "100%",
+  },
+  inputContainer: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 16,
+    marginBottom: 8,
+    color: "#333",
+    fontWeight: "500",
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    fontSize: 16,
+    backgroundColor: "#f9f9f9",
+  },
+  passwordContainer: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    backgroundColor: "#f9f9f9",
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    fontSize: 16,
+  },
+  visibilityBtn: {
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 15,
+  },
+  visibilityText: {
+    color: "#007AFF",
+    fontSize: 14,
+  },
+  button: {
+    backgroundColor: "#007AFF",
+    paddingVertical: 15,
+    borderRadius: 8,
+    alignItems: "center",
+    marginTop: 20,
+  },
+  buttonDisabled: {
+    backgroundColor: "#80b6fb",
+  },
+  buttonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "600",
+  },
+  footer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginTop: 20,
+    alignItems: "center",
+  },
+  footerText: {
+    fontSize: 16,
+    color: "#666",
+    marginRight: 5,
+  },
+  linkText: {
+    color: "#007AFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  errorContainer: {
+    padding: 15,
+    backgroundColor: "#ffebee",
+    borderRadius: 8,
+    marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: "#f44336",
+  },
+  errorText: {
+    color: "#d32f2f",
+    fontSize: 14,
+  },
+});

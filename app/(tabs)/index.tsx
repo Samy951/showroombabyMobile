@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useApiData } from "../../src/hooks/useApiData";
 import { useAuth } from "../../src/hooks/useAuth";
 import {
   Category,
@@ -21,40 +22,52 @@ import {
   productService,
 } from "../../src/services/api.service";
 
+// Définir le type des réponses d'API en fonction de ce que retournent nos services
+type CategoryResponse = { data: Category[] };
+type ProductResponse = {
+  data: Product[];
+  meta: {
+    current_page: number;
+    last_page: number;
+    per_page: number;
+    total: number;
+  };
+};
+
 export default function Home() {
   const { isAuthenticated } = useAuth();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadInitialData();
-  }, []);
+  // Utiliser notre nouveau hook pour charger les données de manière conditionnelle
+  const categoriesApi = useApiData<CategoryResponse>(
+    async () => {
+      console.log("Chargement des catégories...");
+      return categoryService.getCategories();
+    },
+    { data: [] }
+  );
 
-  const loadInitialData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const [categoriesResponse, productsResponse] = await Promise.all([
-        categoryService.getCategories(),
-        productService.getProducts(),
-      ]);
-
-      setCategories(categoriesResponse.data || []);
-      setProducts(productsResponse.data || []);
-    } catch (error: any) {
-      console.error("Erreur lors du chargement des données:", error);
-      setError(
-        error.response?.data?.message ||
-          "Erreur lors du chargement des données. Veuillez réessayer."
-      );
-      Alert.alert("Erreur", "Impossible de charger les données.");
-    } finally {
-      setLoading(false);
+  const productsApi = useApiData<ProductResponse>(
+    async () => {
+      console.log("Chargement des produits...");
+      return productService.getProducts();
+    },
+    {
+      data: [],
+      meta: { current_page: 1, last_page: 1, per_page: 10, total: 0 },
     }
+  );
+
+  // Dérivez les données et les états de chargement/erreur de nos hooks
+  const categories = categoriesApi.data?.data || [];
+  const products = productsApi.data?.data || [];
+  const loading = categoriesApi.isLoading || productsApi.isLoading;
+  const error = categoriesApi.error || productsApi.error;
+
+  // Fonction pour rafraîchir les données
+  const loadInitialData = () => {
+    categoriesApi.refetch();
+    productsApi.refetch();
   };
 
   const handleToggleFavorite = async (productId: string) => {
@@ -65,13 +78,15 @@ export default function Home() {
 
     try {
       await favoriteService.toggleFavorite(Number(productId));
-      setProducts(
-        products.map((product) =>
-          product.id === productId
-            ? { ...product, isFavorite: !product.isFavorite }
-            : product
-        )
+      // Mettre à jour l'état local des produits
+      const updatedProducts = products.map((product) =>
+        product.id === productId
+          ? { ...product, isFavorite: !product.isFavorite }
+          : product
       );
+
+      // Rafraîchir les données si nécessaire
+      productsApi.refetch();
     } catch (error) {
       console.error("Erreur lors de l'ajout aux favoris:", error);
       Alert.alert("Erreur", "Impossible de modifier les favoris.");
@@ -90,6 +105,21 @@ export default function Home() {
     return (
       <View className="flex-1 items-center justify-center">
         <ActivityIndicator size="large" color="#FF6B6B" />
+      </View>
+    );
+  }
+
+  // Afficher un message d'erreur si nécessaire
+  if (error) {
+    return (
+      <View className="flex-1 items-center justify-center p-4">
+        <Text className="text-lg text-red-500 mb-4 text-center">{error}</Text>
+        <TouchableOpacity
+          className="bg-primary px-6 py-3 rounded-full"
+          onPress={loadInitialData}
+        >
+          <Text className="text-white font-medium">Réessayer</Text>
+        </TouchableOpacity>
       </View>
     );
   }

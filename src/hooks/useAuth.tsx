@@ -6,13 +6,15 @@ import {
   useEffect,
   useState,
 } from "react";
-import api from "../config/api";
+import api, { initializeSanctum } from "../config/api";
 import { User, authService } from "../services/auth.service";
 
 interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
+  isApiReady: boolean;
   user: User | null;
+  error: string | null;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   register: (data: {
@@ -22,204 +24,186 @@ interface AuthContextType {
     password_confirmation: string;
   }) => Promise<boolean>;
   checkAuth: () => Promise<boolean>;
+  clearError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
   isAuthenticated: false,
-  isLoading: true,
+  isLoading: false,
+  isApiReady: false,
   user: null,
+  error: null,
   login: async () => false,
   logout: async () => {},
   register: async () => false,
   checkAuth: async () => false,
+  clearError: () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [isApiReady, setIsApiReady] = useState(false);
 
+  // Met à jour l'état d'authentification dans le hook et le stockage
   const updateAuthState = useCallback(
     async (token: string | null, userData: User | null) => {
-      console.log("useAuth - Mise à jour de l'état d'authentification:", {
-        hasToken: !!token,
-        hasUser: !!userData,
-      });
-
       try {
+        console.log("useAuth - Mise à jour de l'état d'authentification", {
+          hasToken: !!token,
+          hasUser: !!userData,
+        });
+
         if (token) {
           await AsyncStorage.setItem("access_token", token);
           api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-          
           if (userData) {
             await AsyncStorage.setItem("user", JSON.stringify(userData));
           }
+          setUser(userData);
+          setIsAuthenticated(true);
+          setIsApiReady(true);
         } else {
           await AsyncStorage.multiRemove(["access_token", "user"]);
           delete api.defaults.headers.common["Authorization"];
+          setUser(null);
+          setIsAuthenticated(false);
+          setIsApiReady(false);
         }
-
-        setUser(userData);
-        setIsAuthenticated(!!userData);
-
-        console.log("useAuth - État d'authentification mis à jour:", {
-          isAuthenticated: !!userData,
-          hasUser: !!userData,
-        });
-      } catch (error) {
-        console.error("useAuth - Erreur lors de la mise à jour de l'état:", error);
-        throw error;
+      } catch (err) {
+        console.error(
+          "Erreur lors de la mise à jour de l'état d'authentification:",
+          err
+        );
+        setError(
+          "Erreur de stockage local. Veuillez redémarrer l'application."
+        );
       }
     },
     []
   );
 
-  const checkAuth = useCallback(async () => {
-    try {
-      console.log("useAuth - Vérification de l'authentification...");
-      
-      // Toujours indiquer le chargement au début
-      setIsLoading(true);
-      
-      // On commence par lire les données locales
-      const [tokenResult, userResult] = await AsyncStorage.multiGet([
-        "access_token", 
-        "user"
-      ]);
-      
-      const token = tokenResult[1];
-      const userStr = userResult[1];
-      
-      console.log("useAuth - Données locales:", { 
-        hasToken: !!token, 
-        hasUserData: !!userStr,
-        // Vérifier si c'est le token de développement
-        isDevToken: token === "fake_dev_token"
-      });
+  // Efface les erreurs
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
 
-      // Cas où nous n'avons pas de token - pas authentifié
+  // Vérifie si l'utilisateur est authentifié au démarrage de l'app
+  const checkAuth = useCallback(async (): Promise<boolean> => {
+    try {
+      console.log("useAuth - Début de la vérification d'authentification");
+      setIsLoading(true);
+      setIsApiReady(false);
+      clearError();
+
+      // Récupérer le token depuis le stockage
+      const token = await AsyncStorage.getItem("access_token");
+      console.log("useAuth - Token trouvé:", token ? "Oui" : "Non");
+
+      // Si pas de token, l'utilisateur n'est pas authentifié
       if (!token) {
-        console.log("useAuth - Pas de token trouvé, considéré comme non authentifié");
+        console.log("useAuth - Aucun token, utilisateur non authentifié");
         await updateAuthState(null, null);
-        setIsLoading(false);
         return false;
       }
 
-      // Mode développement - Simuler une authentification réussie
-      if (token === "fake_dev_token" && userStr) {
+      // Mode développement (faux token)
+      if (token === "fake_dev_token") {
         try {
-          const devUser = JSON.parse(userStr) as User;
           console.log("useAuth - Mode développement détecté");
-          setUser(devUser);
-          setIsAuthenticated(true);
-          api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-          setIsLoading(false);
-          return true;
-        } catch (e) {
-          console.error("useAuth - Erreur avec le mode développement:", e);
+          const userStr = await AsyncStorage.getItem("user");
+          if (userStr) {
+            const userData = JSON.parse(userStr) as User;
+            await updateAuthState(token, userData);
+            console.log("useAuth - Authentification en mode dev réussie");
+            return true;
+          }
+        } catch (err) {
+          console.error("Erreur avec le mode développement:", err);
         }
       }
 
-      // Définir le token dans les en-têtes pour les requêtes API
-      api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-      
-      // Si on a des données utilisateur en cache, les utiliser temporairement
-      if (userStr) {
-        try {
-          const cachedUser = JSON.parse(userStr) as User;
-          console.log("useAuth - Utilisation des données utilisateur en cache");
-          setUser(cachedUser);
-          setIsAuthenticated(true);
-          
-          // Essayer de rafraîchir les données en arrière-plan
-          authService.getProfile()
-            .then(freshUser => {
-              console.log("useAuth - Données utilisateur rafraîchies");
-              AsyncStorage.setItem("user", JSON.stringify(freshUser));
-              setUser(freshUser);
-            })
-            .catch(e => {
-              console.log("useAuth - Échec du rafraîchissement des données:", e);
-              // On garde les données en cache pour l'instant
-            })
-            .finally(() => {
-              setIsLoading(false);
-            });
-          
-          return true;
-        } catch (e) {
-          console.error("useAuth - Erreur lors du parsing des données utilisateur:", e);
-          // Continuer pour récupérer les données depuis l'API
-        }
+      // Si nous sommes en mode développement, nous pouvons sauter l'initialisation de Sanctum
+      // pour permettre un développement plus rapide sans backend
+      if (__DEV__ && process.env.EXPO_PUBLIC_SKIP_AUTH === "true") {
+        console.log(
+          "useAuth - Mode développement avec authentification ignorée"
+        );
+        setIsApiReady(true);
+        return true;
       }
 
-      // Tenter de récupérer le profil utilisateur depuis le serveur
+      // Initialiser Sanctum avant de vérifier le token
+      console.log("useAuth - Initialisation de Sanctum...");
+      const sanctumInitialized = await initializeSanctum();
+      if (!sanctumInitialized) {
+        console.error("useAuth - Échec d'initialisation de Sanctum");
+        await updateAuthState(null, null);
+        return false;
+      }
+
+      // Vérifier que le token est valide
       try {
-        console.log("useAuth - Récupération du profil depuis l'API...");
+        console.log("useAuth - Vérification du token avec l'API...");
         const userData = await authService.getProfile();
-        
-        if (userData) {
-          console.log("useAuth - Profil récupéré avec succès");
-          await updateAuthState(token, userData);
-          setIsLoading(false);
-          return true;
-        } else {
-          console.log("useAuth - Profil récupéré mais invalide");
-          await updateAuthState(null, null);
-          setIsLoading(false);
-          return false;
-        }
-      } catch (error) {
-        console.error("useAuth - Erreur lors de la récupération du profil:", error);
-        // Si le token est expiré ou invalide, on vide l'état d'authentification
-        // Sauf en mode développement où on conserve l'état
-        if (token !== "fake_dev_token") {
-          await updateAuthState(null, null);
-        }
-        setIsLoading(false);
-        return token === "fake_dev_token"; // Vrai si en mode dev
+        console.log("useAuth - Token valide, utilisateur authentifié");
+        await updateAuthState(token, userData);
+        return true;
+      } catch (err) {
+        console.error("useAuth - Token invalide:", err);
+        // Token invalide, supprimer les données d'auth
+        await updateAuthState(null, null);
+        return false;
       }
-    } catch (error) {
-      console.error("useAuth - Erreur générale de vérification:", error);
+    } catch (err: any) {
+      console.error("Erreur lors de la vérification d'authentification:", err);
+      setError(err.message || "Erreur de connexion");
       await updateAuthState(null, null);
-      setIsLoading(false);
       return false;
+    } finally {
+      console.log("useAuth - Fin de la vérification d'authentification");
+      setIsLoading(false);
+      setIsInitialized(true);
     }
-  }, [updateAuthState]);
+  }, [updateAuthState, clearError]);
 
+  // Connexion
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
+      console.log("useAuth - Tentative de connexion");
       setIsLoading(true);
-      console.log("useAuth - Début de la tentative de connexion...");
+      setIsApiReady(false);
+      clearError();
 
-      if (!email || !password) {
-        console.error("useAuth - Email ou mot de passe manquant");
-        throw new Error("Email et mot de passe requis");
+      // Initialiser Sanctum avant la connexion
+      const sanctumInitialized = await initializeSanctum();
+      if (!sanctumInitialized) {
+        throw new Error("Impossible de se connecter au serveur");
       }
 
       const response = await authService.login(email, password);
-      console.log("useAuth - Réponse du service:", {
-        hasToken: !!response?.access_token,
-        hasUser: !!response?.user,
-      });
 
-      if (!response || !response.access_token || !response.user) {
-        throw new Error("Réponse invalide du serveur");
+      if (!response.access_token || !response.user) {
+        throw new Error("Réponse du serveur invalide");
       }
 
-      // Important: mettre à jour l'état AVANT de retourner
+      console.log("useAuth - Connexion réussie");
       await updateAuthState(response.access_token, response.user);
-      console.log("useAuth - Authentification réussie et état mis à jour");
-      setIsLoading(false);
       return true;
-    } catch (error: any) {
-      console.error("useAuth - Erreur de connexion:", error);
+    } catch (err: any) {
+      console.error("Erreur de connexion:", err);
+      setError(err.message || "Échec de connexion");
       await updateAuthState(null, null);
+      return false;
+    } finally {
       setIsLoading(false);
-      throw error;
     }
   };
 
+  // Inscription
   const register = async (data: {
     email: string;
     username: string;
@@ -227,55 +211,104 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     password_confirmation: string;
   }): Promise<boolean> => {
     try {
+      console.log("useAuth - Tentative d'inscription");
       setIsLoading(true);
-      console.log("useAuth - Début de l'inscription...");
-      await authService.register(data);
-      
-      // Après inscription réussie, connecter l'utilisateur
-      return await login(data.email, data.password);
-    } catch (error) {
-      console.error("useAuth - Erreur d'inscription:", error);
+      setIsApiReady(false);
+      clearError();
+
+      // Initialiser Sanctum avant l'inscription
+      const sanctumInitialized = await initializeSanctum();
+      if (!sanctumInitialized) {
+        throw new Error("Impossible de se connecter au serveur");
+      }
+
+      const response = await authService.register(data);
+
+      if (!response.access_token || !response.user) {
+        throw new Error("Réponse du serveur invalide");
+      }
+
+      console.log("useAuth - Inscription réussie");
+      await updateAuthState(response.access_token, response.user);
+      return true;
+    } catch (err: any) {
+      console.error("Erreur d'inscription:", err);
+      setError(err.message || "Échec d'inscription");
+      return false;
+    } finally {
       setIsLoading(false);
-      throw error;
     }
   };
 
+  // Déconnexion
   const logout = async (): Promise<void> => {
     try {
+      console.log("useAuth - Tentative de déconnexion");
       setIsLoading(true);
-      console.log("useAuth - Début de la déconnexion...");
-      
-      const token = await AsyncStorage.getItem("access_token");
-      // Ne pas essayer d'appeler l'API en mode dev
-      if (token !== "fake_dev_token") {
+      setIsApiReady(false);
+      clearError();
+
+      try {
         await authService.logout();
+      } catch (err) {
+        console.error("Erreur lors de la déconnexion:", err);
+        // Continuer même en cas d'erreur pour s'assurer que l'utilisateur est déconnecté localement
       }
-    } catch (error) {
-      console.error("useAuth - Erreur lors de la déconnexion:", error);
-    } finally {
+
+      // Toujours mettre à jour l'état local même si la requête API échoue
+      console.log("useAuth - Déconnexion réussie");
       await updateAuthState(null, null);
+    } finally {
       setIsLoading(false);
     }
   };
 
+  // Effet initial pour charger l'état d'authentification au démarrage
   useEffect(() => {
-    console.log("useAuth - Premier rendu, vérification initiale de l'authentification");
-    checkAuth().catch(error => {
-      console.error("useAuth - Erreur initiale de vérification:", error);
-      setIsLoading(false);
-    });
-  }, [checkAuth]);
+    // Uniquement vérifier l'authentification au premier chargement
+    if (!isInitialized) {
+      console.log(
+        "useAuth - Premier chargement, vérification d'authentification"
+      );
+
+      // Ajouter un timeout de sécurité pour éviter un blocage infini
+      const timeoutId = setTimeout(() => {
+        if (isLoading) {
+          console.warn(
+            "Timeout de vérification d'authentification après 10 secondes"
+          );
+          setIsLoading(false);
+          setIsAuthenticated(false);
+          setError("Délai d'attente dépassé. Veuillez réessayer.");
+        }
+      }, 10000);
+
+      checkAuth().catch((err) => {
+        console.error(
+          "useAuth - Erreur lors de la vérification initiale:",
+          err
+        );
+        setIsLoading(false);
+        setIsAuthenticated(false);
+      });
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [checkAuth, isInitialized, isLoading]);
 
   return (
     <AuthContext.Provider
       value={{
         isAuthenticated,
         isLoading,
+        isApiReady,
         user,
+        error,
         login,
         logout,
         register,
         checkAuth,
+        clearError,
       }}
     >
       {children}
